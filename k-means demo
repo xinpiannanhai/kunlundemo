@@ -1,0 +1,62 @@
+package cn.KL.sparkcore
+
+import org.apache.spark.{SparkConf, SparkContext}
+
+object KMeans {
+  def main(args: Array[String]): Unit = {
+    val conf = new SparkConf().setAppName("KMeans").setMaster("local")
+    val sc = new SparkContext(conf)
+    sc.setLogLevel("WARN")
+
+    val K = 3
+
+    // 读数据文件
+    val lines = sc.textFile("file:///home/spark/data/sparkcore/iris.data")
+    val data = lines.filter(_.trim.size!=0).map(line=> {
+      val value = line.trim.split(",")
+      LabelPoint("100", value.init.map(_.toDouble))
+    })
+
+    // 随机得到K个中心点
+    val centerPoint = data.takeSample(false, K)
+
+    // 计算欧式距离的函数
+    def getLabel(centers: Array[LabelPoint], point: LabelPoint): String = {
+      val dist = centers.map(value => value.getDistance(point.feature))
+      val index = dist.indexOf(dist.min)
+      index.toString
+    }
+
+    // 计算各个点属于哪个类别
+    val data1 = data.map(value => {
+      val label = getLabel(centerPoint, value)
+      LabelPoint(label, value.feature)
+    })
+
+    // 计算K个聚类中心
+    data1.filter(_.label=="0").map(x=>(x.feature(0), x.feature(1), x.feature(2), x.feature(3))).collect.foreach(println _)
+    println("\n******************************************************************\n")
+    data1.filter(_.label=="1").collect().foreach(x=>println(x.label + "; " + x.feature.toBuffer))
+    println("\n******************************************************************\n")
+    data1.filter(_.label=="2").collect().foreach(x=>println(x.label + "; " + x.feature.toBuffer))
+
+
+    data1.collect().foreach(x=>println(x.label + "; " + x.feature.toBuffer))
+
+    sc.stop()
+  }
+}
+
+package cn.KL.sparkcore
+
+import scala.math.{pow, sqrt}
+
+case class LabelPoint(label: String, feature: Array[Double]) {
+  def getDistance(that: LabelPoint): Double = {
+    sqrt(feature.zip(that.feature).map(x=>pow(x._1 - x._2, 2)).sum)
+  }
+
+  def getDistance(that: Array[Double]): Double = {
+    sqrt(feature.zip(that).map(x=>pow(x._1 - x._2, 2)).sum)
+  }
+}
