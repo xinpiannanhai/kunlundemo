@@ -1,0 +1,181 @@
+package cn.zsy.project1New
+
+import org.apache.spark.sql.SparkSession
+
+object SparkSQL1 {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("SparkSQL1")
+      .master("spark://node1:7077")
+      .enableHiveSupport()
+      .getOrCreate()
+    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.addJar("/home/spark/IdeaProjects/SparkSamples/out/artifacts/SparkSamples_jar/SparkSamples.jar")
+
+    //将数据插入hive
+    import spark.implicits._
+    import spark.sql
+//    val dateDF = spark.read.csv("hdfs://node1:8020/user/spark/data/tbDate.txt")
+//    dateDF.createTempView("t1")
+//    sql("insert overwrite table hive.dimensiondate select * from t1")
+//
+//    val stockDF = spark.read.csv("hdfs://node1:8020/user/spark/data/tbStock.txt")
+//    stockDF.createTempView("t2")
+//    sql("insert overwrite table hive.sale select * from t2")
+//
+//    val StockDetailDF = spark.read.csv("hdfs://node1:8020/user/spark/data/tbStockDetail.txt")
+//    StockDetailDF.createTempView("t3")
+//    sql("insert overwrite table hive.saledetail select * from t3")
+
+    //    sql("select count(*) from dimensiondate").show
+    //    sql("select count(*) from sale").show
+    //    sql("select count(*) from saledetail").show
+
+    //查询分析
+    //3.1、按年统计销售额，年份升序
+    sql("use hive")
+//    sql(
+//      """
+//        |select year, sum(amount)
+//        |  from dimensiondate t1, sale t2 , saledetail t3
+//        | where t1.dateID = t2.dateID and
+//        |       t2.ordernumber = t3.ordernumber
+//        |group by year
+//        |order by year
+//      """.stripMargin).show(false)
+
+    // 3.2、按交易日期-订单号分组统计销售额,按年份排倒序
+    sql(
+      """
+        |select t2.dateID, t2.ordernumber, sum(amount)
+        |  from dimensiondate t1, sale t2 , saledetail t3
+        | where t1.dateID = t2.dateID and
+        |       t2.ordernumber = t3.ordernumber
+        |group by t2.dateID, t2.ordernumber, year
+        |order by year desc
+      """.stripMargin).show(false)
+
+    //3.3、年度销售额最大的订单金额
+    //（求1：年度、订单金额【即每年最大的订单金额】）
+    sql(
+      """
+        |select year, max(sumofamount)
+        |from (
+        |select year, sum(amount) sumofamount
+        |  from dimensiondate t1, sale t2 , saledetail t3
+        | where t1.dateID = t2.dateID and
+        |       t2.ordernumber = t3.ordernumber
+        |group by year, t2.ordernumber
+        |)
+        |group by year
+        |order by year
+      """.stripMargin).show(false)
+
+    //3.3、年度销售额最大的订单金额
+    //（求2：年度、订单号、订单金额【即每年最大的订单金额和订单号】）
+    sql(
+      """
+        |select year, ordernumber, sumofamount, row_number() over (partition by year order by sumofamount desc) myrank
+        |from (
+        |      select year, t2.ordernumber, sum(amount) sumofamount
+        |        from dimensiondate t1, sale t2 , saledetail t3
+        |       where t1.dateID = t2.dateID and
+        |             t2.ordernumber = t3.ordernumber
+        |      group by year, t2.ordernumber )
+        |having myrank = 1
+        |order by year
+      """.stripMargin).show()
+
+    //3.4、季度销售额前10位
+    //（求1：每季度中单品销售金额最大的前10位；年度、季度、商品id、单品销售总金额）
+    sql(
+      """
+        |select year, quot, itemid, sumofamount, row_number() over (partition by year, quot order by sumofamount desc) myrank
+        |from (
+        |      select year, quot, itemid, sum(amount) sumofamount
+        |        from dimensiondate t1, sale t2 , saledetail t3
+        |       where t1.dateID = t2.dateID and
+        |             t2.ordernumber = t3.ordernumber
+        |      group by year, quot, itemid)
+        |having myrank <= 10
+        |order by year, quot, myrank
+      """.stripMargin).show(200)
+
+    //（求2：每季度中订单销售金额最大的前10位；年度、季度、订单id、订单销售总金额）
+    sql(
+      """
+        |select year, quot, ordernumber, sumofamount, row_number() over (partition by year, quot order by sumofamount desc) myrank
+        |from (
+        |      select year, quot, t2.ordernumber, sum(amount) sumofamount
+        |        from dimensiondate t1, sale t2 , saledetail t3
+        |       where t1.dateID = t2.dateID and
+        |             t2.ordernumber = t3.ordernumber
+        |      group by year, quot, t2.ordernumber)
+        |having myrank <= 10
+        |order by year, quot, myrank
+      """.stripMargin).show(200)
+
+    //3.5、销售金额在10W以上的订单
+    sql(
+      """
+        |select t2.ordernumber, sum(amount) sumofamount
+        |  from sale t2 , saledetail t3
+        | where t2.ordernumber = t3.ordernumber
+        |group by t2.ordernumber
+        |having sumofamount > 100000
+      """.stripMargin).show()
+
+    //3.6、按交易日统计销售额（加一个：每年交易日）
+    // 每天算一个合计值
+    sql(
+      """
+        |select t2.dateID, sum(amount) sumofamount
+        |  from dimensiondate t1, sale t2 , saledetail t3
+        | where t1.dateID = t2.dateID and
+        |       t2.ordernumber = t3.ordernumber
+        |group by t2.dateID
+        |order by t2.dateID
+      """.stripMargin).show()
+
+    // 每年的同一天，算一个合计值
+    sql(
+      """
+        |select month, day, sum(amount) sumofamount
+        |  from dimensiondate t1, sale t2 , saledetail t3
+        | where t1.dateID = t2.dateID and
+        |       t2.ordernumber = t3.ordernumber
+        |group by month, day
+        |order by month, day
+      """.stripMargin).show(400)
+
+    //3.7、每年度销售额最大的交易日
+    sql(
+      """
+        |select year, dateID, sumofamount, row_number() over (partition by year order by sumofamount desc) myrank
+        |from (
+        |      select year, t2.dateID, sum(amount) sumofamount
+        |        from dimensiondate t1, sale t2 , saledetail t3
+        |       where t1.dateID = t2.dateID and
+        |             t2.ordernumber = t3.ordernumber
+        |      group by year, t2.dateID )
+        |having myrank = 1
+      """.stripMargin).show()
+
+    //3.8、年度最畅销的商品(即每年销售金额最大的商品)
+    sql(
+      """
+        |select year, itemid, sumofamount, row_number() over (partition by year order by sumofamount desc) myrank
+        |from (
+        |      select year, itemid, sum(amount) sumofamount
+        |        from dimensiondate t1, sale t2 , saledetail t3
+        |       where t1.dateID = t2.dateID and
+        |             t2.ordernumber = t3.ordernumber
+        |      group by year, itemid )
+        |having myrank = 1
+        |order by 3 desc
+      """.stripMargin).show()
+
+    spark.stop()
+  }
+}
+
