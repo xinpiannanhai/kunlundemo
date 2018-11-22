@@ -1,0 +1,44 @@
+import scala.math.{pow, sqrt}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.{SparkConf, SparkContext}
+
+object SparkKNN {
+  def main(args: Array[String]): Unit = {
+    val K = 9
+    val conf = new SparkConf().setAppName("SparkKNN")
+//      .setMaster("spark://node1:7077")
+    val sc = new SparkContext(conf)
+    sc.setLogLevel("WARN")
+//    sc.addJar("/home/spark/IdeaProjects/SparkSamples/out/artifacts/SparkSamples_jar/SparkSamples.jar")
+//
+//    // 1、读文件，获取数据（5分）
+    val lines = sc.textFile("hdfs://node1:8020/user/spark/data/myiris.dat")
+      .filter(_.trim!=0)
+      .map(line => line.split(","))
+
+    // 2、将数据分成两类：有分类的数据（D1）；待求分类的数据（D2）（5分）
+    //（D1的数据放在RDD中，D2的数据放在数组中）
+    val data1 = lines.filter(_.size==5).map(line=>(line.last, line.init.map(_.toDouble)))
+    val data2 = lines.filter(_.size==4).map(arr=>arr.map(_.toDouble)).collect()
+    data1.cache()
+
+    // 3、对D2中每一个待求分类的数据进行计算：
+    def getDistanceKNN(point:Array[Double], data: RDD[(String, Array[Double])]) = {
+      // 	3.1、计算其与D1中每个点的距离（10分）
+      val distAndLableRDD = data.map( y=> {
+        val value = y._2.zip(point).map(x=>pow(x._1-x._2,2)).sum
+//        (sqrt(value), y._1)
+        (value, y._1)
+      })
+      // 3.2、取距离最近的K个点（5分）
+      distAndLableRDD.sortByKey()
+        .take(9)
+        .map(x=>x._2)
+        .groupBy(x=>x)
+        .map(x=>(x._1, x._2.size))
+        .foreach(x=>println(point.toBuffer + " : " + x))
+    }
+
+    data2.foreach(point => {
+      getDistanceKNN(point, data1)
+    })
